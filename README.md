@@ -1,5 +1,5 @@
 # Class Distance Weighted Cross-Entropy Loss
-Implementation of the Class Distance Weighted Cross-Entropy Loss in PyTorch.
+Implementation of the Class Distance Weighted Cross-Entropy Loss in PyTorch. This loss is designed for **the multilabel classification problems, when one assumes ordinal nature between the classes**.
 
 The CDW Cross-Entropy Loss is presented in the [Class Distance Weighted Cross-Entropy Loss for Ulcerative Colitis Severity Estimation](https://arxiv.org/abs/2202.05167) (see citations) and further extended in the [Using sequences of life-events to predict human lives](https://www.nature.com/articles/s43588-023-00573-5).
 
