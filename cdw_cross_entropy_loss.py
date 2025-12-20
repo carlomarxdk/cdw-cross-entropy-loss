@@ -1,81 +1,74 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 
 class CDW_CELoss(nn.Module):
     """
-    Implementation of the Class Distance Weighted Cross-Entropy Loss as described in https://arxiv.org/abs/2202.05167"""
+    Implementation of the Class Distance Weighted Cross-Entropy Loss 
+    as described in https://arxiv.org/abs/2202.05167 (and further modified)
+    """
 
-    def __init__(self, num_classes: int,
-                 alpha: float = 2.,
-                 delta: float = 3.,
-                 reduction: str = "mean",
-                 transform: str = "power",  # Original paper uses power transform
-                 eps: float = 1e-8):
-        super(CDW_CELoss, self).__init__()
-        """
-        :param num_classes: Name of the vocabulary.
-        :param alpha: Exponent for the penalty of the distance, 
-        :param delta: Threshold for the Huber transform,
-        :param reduction: Specifies the reduction to apply to the output: 'none' | 'mean' | 'sum'
-        :param transform: Specifies the transformation to apply to the distance/penalty: 'huber' | 'log' | 'power'
-        """
-
+    def __init__(
+        self,
+        num_classes: int,
+        alpha: float = 2.0,
+        delta: float = 3.0,
+        reduction: str = "mean",
+        transform: str = "power",
+        eps: float = 1e-8,
+    ):
+        super().__init__()
         assert alpha > 0, "Alpha should be larger than 0"
-        assert reduction in [
-            "mean", "sum"], "Reduction should be either mean or sum"
-        assert transform in [
-            "huber", "log", "power"], "Transform should be either huber, log or power"
+        assert reduction in ("none", "mean", "sum")
+        assert transform in ("huber", "log", "power")
 
         self.reduction = reduction
         self.transform = transform
         self.alpha = alpha
+        self.delta = delta
         self.eps = eps
         self.num_classes = num_classes
-        self.register_buffer(name="w", tensor=torch.tensor(
-            [float(i) for i in range(self.num_classes)]))  # to speed up the computation
+        self.register_buffer("w", torch.arange(num_classes, dtype=torch.float))
 
-        self.delta = delta  # for huber transform only
-
-    def huber_transform(self, x):
-        """Weight distances according to the Huber Loss"""
+    def huber_transform(self, x: Tensor) -> Tensor:
+        """Weight distances according to the Huber loss."""
         return torch.where(
             x < self.delta,
             0.5 * torch.pow(x, 2),
-            self.delta * (x - 0.5 * self.delta)
+            self.delta * (x - 0.5 * self.delta),
         )
 
     def forward(self, logits: Tensor, target: Tensor) -> Tensor:
         """
-        Forward Methods
-        :param logits: Logits from the model (Torch.Tensor) Size: (B, C)
-        :param target: Target labels (Torch.Tensor) Size: (B, )
-
-        :return: Loss value (Torch.Tensor)
+        Forward pass.
+        
+        Args:
+            logits: (B, C) raw model outputs
+            target: (B,) integer class labels
+        Returns:
+            loss: Tensor
         """
-        w = torch.abs(self.w - target.view(-1, 1))  # calculate penalty weights
+        probs = F.softmax(logits, dim=-1)
+        
+        weights = torch.abs(self.w - target.view(-1, 1))
 
         if self.transform == "huber":
-            # apply huber transform (not in the paper)
-            w = self.huber_transform(w)
+            weights = self.huber_transform(weights)
         elif self.transform == "log":
-            w = torch.log1p(w)
-            # apply log transform (not in the paper)
-            w = torch.pow(w, self.alpha)
+            weights = torch.log1p(weights)
+            weights = torch.pow(weights, self.alpha)
         elif self.transform == "power":
-            # apply power transform (in the paper)
-            w = torch.pow(w, self.alpha)
-        else:
-            raise NotImplementedError(
-                "%s transform is not implemented" % self.transform)
+            weights = torch.pow(weights, self.alpha)
 
-        loss = - torch.mul(torch.log(1 - logits + self.eps), w).sum(-1)
+        # Weighted negative log-likelihood across all classes
+        # Penalizes probability mass on distant classes
+        loss = -torch.sum(weights * torch.log(1 - probs + self.eps), dim=-1)
 
-        if self.reduction == "mean":
-            return torch.mean(loss)
-        elif self.reduction == "sum":
-            return torch.sum(loss)
-        else:
-            raise NotImplementedError(
-                "%s reduction is not implemented" % self.reduction)
+        if self.reduction == "none":
+            return loss
+        elif self.reduction == "mean":
+            return loss.mean()
+        else:  # sum
+            return loss.sum()
